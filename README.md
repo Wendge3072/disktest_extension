@@ -38,6 +38,43 @@ Ada-Store / CSAL 的 fio 实验配置与启动脚本。新增实验检验：**�
 
 若要沿用原随机预处理，可显式运行 `gc_inf_onRead/prepare.sh`。它只调用原前三个一小时随机写、最后1800秒的4-job写及600秒等待，不运行后续16点扫描。该流程写入整个FTL地址范围，耗时约3小时40分钟，不自动执行，也不保证候选读区已完整覆盖或驻留QLC。
 
+## 正式运行前核验读取确实到达 QLC
+
+当前247的两块NVMe使用`uio_pci_generic`驱动，由SPDK直接操作。应在**宿主机**使用SPDK自带的[iostat.py](https://github.com/spdk/spdk/blob/v22.09/scripts/iostat.py)观察物理bdev；Linux的iostat读取内核设备统计，Guest的`/dev/vda`统计只能证明逻辑IO。实时观察命令为：
+
+```bash
+cd /home/nly/csal/git/spdk
+sudo python3 scripts/iostat.py -d -m -i 1 -t 20
+```
+
+这里20秒是观察窗口，不是性能实验时长。第一份报表包含启动以来的统计，应看后续间隔报表。当前映射中`nvme0n1`是P4510/TLC，`nvme1n1`是P5316/QLC，`FTL0`是Guest看到的逻辑设备。物理盘总读还包含compaction、GC和L2P等读取；仅看到NVMe读带宽增长不能证明来自前台fio。
+
+新增的`verify_read_path.py`在宿主机运行：先检查旧GC控制器和Guest fio是否结束，核对FTL映射/块大小/容量，然后在静默窗口进行一个**单独的只读探测**。不设置GC阈值，不复位计数器，不写SSD。探测保持生成配置的读offset、size、4KiB、QD和seed，默认`io_size=64MiB`、2000 IOPS，约16384次读取，目标用时约8秒；慢读有超时保护，未完成预算则不通过。
+
+先生成与后续正式实验一致的配置（下面在247宿主机仓库内执行，只生成文件）：
+
+```bash
+cd /path/to/disktest_extension
+READ_IOPS=25000 DEVICE_BYTES=14541900267520 \
+  bash gc_inf_onRead/make_job.sh /tmp/read-gc-profile.fio
+
+sudo python3 gc_inf_onRead/verify_read_path.py \
+  --profile /tmp/read-gc-profile.fio \
+  --known-hosts /home/nly/csal/ada-fig5-guest-20261009.known_hosts
+```
+
+也可传入Guest已生成并复制到宿主机的`profile.fio`。SSH使用现有配置或一次交互认证；脚本不保存密码。`KNOWN_HOSTS`与上面的Guest连接相同。脚本依赖宿主机Python3、Guest fio/Bash/coreutils；若Guest已有sysstat/iostat会一起记录，否则明确记录缺失，主要证据仍来自SPDK。可手动在Guest安装`yum install sysstat -y`以增加虚拟盘层的旁证。
+
+结果默认保存到`$SPDK_DIR/log/read_path_checks/<时间-ID>/`，包含实际probe job、fio JSON、前后bdev/FTL统计、SPDK iostat文本、设备身份与`verification.json`。退出0且`passed=true`才通过。判据包括：
+
+- fio完成读量与FTL0逻辑读量一致；`USER.read.blocks×4096`覆盖至少99%的逻辑读量，排除大量未映射LBA的直接零返回。
+- 扣除所有非USER读字节后，P5316剩余的读量至少为fio读量的95%。包括TLC侧元数据在内的扣除使这个下界更保守。
+- 空闲和探测窗口没有其他前台写入、GC或compaction活动；计数未复位，起止设备身份一致，末尾读计数稳定。
+
+元数据读可能由探测自身的L2P page-in引起，按分类保守扣除；分类与物理总量无法对齐时判为证据不足。结果只表示**本次随机抽样的QLC比例下界**，不保证1TiB内每个LBA已写入，不自动替代正式600秒窗口的路由统计。修改读范围、预处理状态或设备映射后需要重新核验。若不通过，查看原因区分空读、TLC驻留、后台活动及统计异常，再修正条件。
+
+当前正在运行旧`rnd64.job`/GC控制器时，脚本会退出，不会发起探测。等旧实验自然完成并结束其控制器后再执行。不要为了探测而中断正在收集的数据。
+
 ## 两端启动
 
 把本仓库放到 Guest 的 `/root/disktest_extension`，并在宿主机也保存一份。下面示例 `READ_IOPS=25000` **只是命令示例，不是 P5316 的实测能力**；正式实验应在相同写负载、读范围和主动GC关闭条件下校准，再选择固定绝对IOPS。
