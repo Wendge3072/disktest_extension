@@ -1,0 +1,187 @@
+{
+  "upstream": "https://github.com/Wendge3072/disktest.git",
+  "commit": "8c053a082ebeecc83875bfbe1abea6aeeb29a23c",
+  "copied_directories": [
+    "gc_inf_onBW",
+    "gc_sdisk",
+    "jitter"
+  ],
+  "files": [
+    {
+      "path": "gc_inf_onBW/rnd.job",
+      "sha256": "d98c9d461111c805b6be4f6fcbf7f47b1dda0fe52bf95f2f367d4853ca1192ab"
+    },
+    {
+      "path": "gc_inf_onBW/rnd2.job",
+      "sha256": "58f92f2b47a41fcb27669cc72e371c380413bb822fcc4e04e235611faac7c1ce"
+    },
+    {
+      "path": "gc_inf_onBW/rnd3.job",
+      "sha256": "845e1e0f1f0274542c2eae3d436ffbdd4f9452d3d465ec88d72846cba5226305"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64.job",
+      "sha256": "66920f1f12e0fa8fdd820d238b8c60e2af1dc0c8b9bc15876d043cf22a4eb1e3"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim1.job",
+      "sha256": "30ba062845f99eeca08856dacc3950f45e860910cef0c70b8803923c49b1f2cd"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim10.job",
+      "sha256": "7dc158f211be695ed4b31d2345a7e6688895bdd46231d7f1439c63bc8fc15f03"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim11.job",
+      "sha256": "ccc6721ee13fac3ec55e12cd9affac37411eedaa3b0de0b50fd20e54c686498f"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim12.job",
+      "sha256": "141f1cc279ca0691fea68bb6e413b0be4206a88f56dde72da6799c9971a4e848"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim13.job",
+      "sha256": "8c2d78b48420742e6012b7fe3253fc7a8f43bf20fd9b0e338ad0cbaf9463abbf"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim14.job",
+      "sha256": "fedf0a1213fbb3b46454bb36973e27f36b185da51b08dff44b55545e71a3aeb3"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim15.job",
+      "sha256": "f0018e2a9b87c5a302df753c420bd4c96be9e0ba85c154ff156c4c04ff3b15f2"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim16.job",
+      "sha256": "41ed7acea7c949d9bc4f34e55e925cb1b602189c723291a2e69d6db3d4a3e356"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim2.job",
+      "sha256": "f0c85b5e82127662f85537e94acd4dd30338cf7ea98ee51cdb7c5d133f951ecd"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim3.job",
+      "sha256": "9750015907ff17e3b1c67ce46da1bd06219e2175fda86ecf48a364a85da88dda"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim4.job",
+      "sha256": "6db8d70a9099cf174d302e273216c7824339fca4f87a33839ba4bc827eb0c8db"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim5.job",
+      "sha256": "d8ad6f9fb2900d66a1a403991730065d6ca697f1e3461a8703a90845f6ab1336"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim6.job",
+      "sha256": "8e78e7ecad645f3103b5b75e03fdb63e63db5f4e20422d32ffeb393b03084ee1"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim7.job",
+      "sha256": "cacc65c027b10a66a9cff6198538202c91bc1384e9726d7bba4c0da15e5f0acf"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim8.job",
+      "sha256": "647fcda087c7ce97561a9e7b3a3869ff2e8b73e25404ec7dfcf0fa680d83046f"
+    },
+    {
+      "path": "gc_inf_onBW/rnd64lim9.job",
+      "sha256": "ab5e6267cb866a1cf7e18a3f3a1d7c5a9c503b6b309cf4430af23a9fb0ec242b"
+    },
+    {
+      "path": "gc_inf_onBW/seq.job",
+      "sha256": "31144d690d1cb23f8f75d61a218ef066852f3848477d36a703305f5ae6618339"
+    },
+    {
+      "path": "gc_inf_onBW/start.sh",
+      "sha256": "d4db2c353c2b88b9358bbb442b432ec9226dceeb9a96d729fa673d71a1b2b6bf"
+    },
+    {
+      "path": "gc_inf_onBW/start64.sh",
+      "sha256": "423cbc5dec96db63a2453e85458405d529dbcce02927737c8da2b5a8da59e765"
+    },
+    {
+      "path": "gc_sdisk/rnd.job",
+      "sha256": "e3f897782c197dfc95bf5d9351386c1173c5805100670a7ce5ce45361e55c71e"
+    },
+    {
+      "path": "gc_sdisk/rnd128.job",
+      "sha256": "790482abe0d910b69de514d73287a35accf65dda11bf506621028e94f9df571c"
+    },
+    {
+      "path": "gc_sdisk/rnd128hy.job",
+      "sha256": "ab649e731526dba17290427c39c00efe7bd0b932bf5baf2c59b8cdfbcbc3f607"
+    },
+    {
+      "path": "gc_sdisk/rnd128lim.job",
+      "sha256": "abddd5bc65eb29db7798f2b25e7308ff8925ecd00350999494565ae98b7ca2c7"
+    },
+    {
+      "path": "gc_sdisk/rnd16.job",
+      "sha256": "d0f4030587485f649c89b7146395430c14116129678d08a3eb3c6710b55a8b38"
+    },
+    {
+      "path": "gc_sdisk/rnd16hy.job",
+      "sha256": "baa7c7b5ecf5eb0f91ea6d1f6110c5e2cf85177b15060acbd7fbb0a5a488ee73"
+    },
+    {
+      "path": "gc_sdisk/rnd16lim.job",
+      "sha256": "c68437ba68c190baaa7773f75e9d6b16a77eefdd132d0a0eaff05033be262180"
+    },
+    {
+      "path": "gc_sdisk/rnd32.job",
+      "sha256": "9b7cf7d3aa37019856d757bf7a1069dbafbc2d44764122b66bda7256daa13ba1"
+    },
+    {
+      "path": "gc_sdisk/rnd32hy.job",
+      "sha256": "c2eef4ec3a48c04cae7fa9ba9480e26386d5b4b7b2d5d2fb9788a9591fda6ca7"
+    },
+    {
+      "path": "gc_sdisk/rnd32lim.job",
+      "sha256": "2edba3057ecfb90a5da68b741253d2c8c130c36a229e06b7231569f414372466"
+    },
+    {
+      "path": "gc_sdisk/rnd64.job",
+      "sha256": "447fed4703897676c1bbc5f8e4f694c1480b3b280a5eb739e0e93a4b0ad6307e"
+    },
+    {
+      "path": "gc_sdisk/rnd64hy.job",
+      "sha256": "4631c6501de7ac304e182eee51dbf957e1f5dc327f41d4110b261e7eaed501ad"
+    },
+    {
+      "path": "gc_sdisk/rnd64lim.job",
+      "sha256": "3b7a201182c54b6160fe8e2af4a04efe6883243c89b8467efc3de47dab455d7f"
+    },
+    {
+      "path": "gc_sdisk/seq.job",
+      "sha256": "31144d690d1cb23f8f75d61a218ef066852f3848477d36a703305f5ae6618339"
+    },
+    {
+      "path": "gc_sdisk/start128.sh",
+      "sha256": "d1dbbda0e01068b2b5c0d64b8c286d0b1f0f2fe7f5e3a1c5f30a07d3c3ef53dc"
+    },
+    {
+      "path": "gc_sdisk/start16.sh",
+      "sha256": "d515799b8050715ac32a0258afbc90c8b2c8462a0056175da0329e951c6c93eb"
+    },
+    {
+      "path": "gc_sdisk/start32.sh",
+      "sha256": "3aea9e5e39f00ae7cb4285edff6ac36986b53174f4f0520163757b0fdc43dea8"
+    },
+    {
+      "path": "gc_sdisk/start64.sh",
+      "sha256": "fbd227f8c900dbbf18df50ab11e35c58ac87ee9ad2fdfd908f87dd838ec61597"
+    },
+    {
+      "path": "jitter/rnd.job",
+      "sha256": "d1acfb04e711717d96dd3ea0165157248625e34ef23892ff03b433e967cd7f16"
+    },
+    {
+      "path": "jitter/seq.job",
+      "sha256": "31144d690d1cb23f8f75d61a218ef066852f3848477d36a703305f5ae6618339"
+    },
+    {
+      "path": "jitter/start.sh",
+      "sha256": "2041f2ce1e155b97993585487375698396e94240f3012bb76b4e1c7af4904d86"
+    }
+  ]
+}

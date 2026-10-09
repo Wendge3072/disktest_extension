@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.DS_Store
+gc_inf_onRead/results/
+gc_inf_onRead/host_results/
+**/time.txt
+*.log
+*.qcow2
+*.img
+.env
+*.key
+id_rsa*
+id_ed25519*
