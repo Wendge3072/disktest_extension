@@ -53,3 +53,10 @@ python3 -m unittest discover -s tests -v
 - 预热和完整读区检查保留为独立准备步骤。正式默认仍为0–320GiB随机写与2–3TiB随机读并行600秒，GC门槛仍为0→240秒920→600秒0；保留读写范围、写入预算、低地址写区保护，以及原分析器所需的结果文件。
 - 模拟检查覆盖Guest独立运行、位置参数、单次SSH启动、GC计时、fio提前失败不开GC、RPC失败恢复0。全部68项自动检查通过，Bash语法检查和`git diff --check`通过。
 - 本次只修改本地文件并执行模拟检查，没有同步服务器，没有连接247或Guest，没有提交真实fio或设置类RPC。关闭本地SSH不保证远端fio立即结束，需要中止时可在Guest使用`pkill -TERM -x fio`。
+
+## 2026-10-10两个窗口独立运行
+
+- 新增 `start_gc_manual.sh`：宿主机只设置 GC 门槛和保存日志，预留约两分钟并打印 Guest 命令，不使用 SSH、不启动 fio。Guest `start.sh` 支持 `START_AT`，按同一个 Unix 时间等待启动；正式 IO 配置不变。
+- 宿主机保存约定时间，Guest 保存实际启动时间。分析要求两者相差小于 1 秒；两端系统时钟仍需同步。控制器不自动发现 Guest 失败，任意一端异常时需在另一窗口停止脚本。
+- 71项全量模拟检查通过，覆盖独立两端运行、仅一次 fio、没有 SSH、GC 的 0→920→0 切换、GC RPC 失败恢复 0、过期开始时间不发 IO。随后增加手动控制器阻止读区探测的检查，相关3项通过；当前共72项。Bash语法和diff检查通过。
+- 只读检查确认247的vhost PID63434输出日志为 `/home/nly/csal/git/spdk/log/gc_influnce_on_read`，README手动启动示例使用该路径；以后更换日志时应调整 `SPDK_LOG`。没有执行真实fio或设置类RPC。

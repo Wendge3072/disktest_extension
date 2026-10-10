@@ -54,7 +54,7 @@ def read_profile(path):
 
 def check_controllers():
     rows = subprocess.check_output(['ps', '-eo', 'pid=,args='], text=True)
-    pattern = r'(?:^|[ /])(?:start_gc\.sh|control_gc_host\.sh|start_gc_host\.sh)(?:\s|$)'
+    pattern = r'(?:^|[ /])(?:start_gc\.sh|control_gc_host\.sh|start_gc_host\.sh|start_gc_manual\.sh)(?:\s|$)'
     conflicts = [line.split(None, 1)[0] for line in rows.splitlines() if re.search(pattern, line)]
     if conflicts:
         raise RuntimeError('Existing GC controller PID %s; finish the old experiment first' % ','.join(conflicts))

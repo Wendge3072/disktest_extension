@@ -62,7 +62,11 @@ sudo python3 gc_inf_onRead/verify_qlc_range.py \
 
 **退出 0，并且 `verification.json` 中 `passed=true`、`complete=true`，再进入正式实验。** 结果留在宿主机即可，不需要复制 JSON 到 Guest。这个独立检查工具仍使用已审计的 SPDK 构建；重编译后须重新核对读取分类。
 
-## 3. 只在宿主机启动正式实验
+## 3. 两个窗口启动正式实验
+
+参照 [README.md 的两个窗口方式](../README.md#正式启动两个窗口各一条命令)，先启动宿主机 `start_gc_manual.sh`，再将其打印的命令复制到 Guest。这个控制器不使用 SSH；两端按同一个约定开始时间运行。
+
+下面是仍然保留的 SSH 自动启动方式，两种方式只选择一种：
 
 ```bash
 cd /path/to/disktest_extension/gc_inf_onRead

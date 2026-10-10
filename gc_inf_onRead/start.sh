@@ -13,6 +13,11 @@ FIO_BIN=${FIO_BIN:-fio}
     echo 'Usage: bash start.sh [RUN_ID [READ_IOPS [WRITE_MIB]]]' >&2; exit 2;
 }
 [[ $DRY_RUN == 0 || $DRY_RUN == 1 ]] || { echo 'DRY_RUN must be 0 or 1' >&2; exit 2; }
+if [[ -n ${START_AT:-} ]]; then
+    [[ $START_AT =~ ^[1-9][0-9]{9}$ ]] && (( START_AT * 1000 > $(date +%s%3N) )) || {
+        echo 'START_AT must be a future Unix timestamp in seconds' >&2; exit 2;
+    }
+fi
 
 if [[ -b $DEVICE ]]; then
     export DEVICE_BYTES=$(blockdev --getsize64 "$DEVICE")
@@ -60,6 +65,13 @@ finish() {
 trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
+if [[ -n ${START_AT:-} ]]; then
+    echo "Waiting for START_AT=$START_AT" >&2
+    while (( $(date +%s%3N) < START_AT * 1000 )); do sleep 0.1; done
+    (( $(date +%s%3N) - START_AT * 1000 < 1000 )) || {
+        echo 'Missed the scheduled start; choose a new time and run ID' >&2; exit 1;
+    }
+fi
 started_ms=$(date +%s%3N)
 if command -v setsid >/dev/null; then
     setsid "$FIO_BIN" "$RESULT_DIR/profile.fio" --output-format=json --output="$RESULT_DIR/result.json" > "$RESULT_DIR/fio.log" 2>&1 &

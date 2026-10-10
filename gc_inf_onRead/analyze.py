@@ -114,6 +114,10 @@ def main():
     if len(marker) != 2 or marker[0] != run_id:
         raise ValueError('started.tsv run ID mismatch')
     start_ms = int(marker[1])
+    if (host / 'scheduled.tsv').exists():
+        scheduled = (host / 'scheduled.tsv').read_text().strip().split('\t')
+        if len(scheduled) != 2 or scheduled[0] != run_id or abs(int(scheduled[1]) - start_ms) >= 1000:
+            raise ValueError('Guest start differs from the scheduled host start by at least one second')
     if (host / 'request.tsv').exists() and read_manifest(host / 'request.tsv') != req:
         raise ValueError('Guest and host requests differ')
     if (host / 'started.tsv').exists() and (host / 'started.tsv').read_text().strip() != '\t'.join(marker):

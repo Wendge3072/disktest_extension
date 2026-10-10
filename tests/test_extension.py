@@ -176,6 +176,51 @@ if str(threshold)==os.environ.get('FAIL_THRESHOLD'): raise SystemExit(23)
                     CONTROL_LOCK_DIR=str(self.base), BASELINE_SETTLE='0', TAIL_START_SETTLE='0',
                     POLL_INTERVAL='0.05')
 
+    def test_two_terminal_schedule_runs_without_ssh_or_host_launching_fio(self):
+        host_env = self.make_host_mocks()
+        start_at = str(int(time.time()) + 2)
+        host_env['START_AT'] = start_at
+        guest_env = dict(self.env, START_AT=start_at)
+        host = subprocess.Popen([BASH, str(NEW / 'start_gc_manual.sh'), 'test-run', '100', '1'],
+                                env=host_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            guest = self.command('start.sh', guest_env)
+            hout, herr = host.communicate(timeout=10)
+            self.assertEqual(guest.returncode, 0, guest.stderr)
+            self.assertEqual(host.returncode, 0, hout + herr)
+            calls = [json.loads(line) for line in (self.base / 'calls.jsonl').read_text().splitlines()]
+            self.assertFalse(any(c['tool'] == 'ssh' for c in calls))
+            self.assertEqual(sum(c['tool'] == 'fio' for c in calls), 1)
+            rpc = [c for c in calls if c['tool'] == 'rpc']
+            self.assertEqual([c['threshold'] for c in rpc], [0, 920, 0])
+            self.assertLess(rpc[0]['epoch'], int(start_at))
+            self.assertGreaterEqual(rpc[1]['epoch'], int(start_at) + 1)
+            self.assertLess(rpc[1]['epoch'], int(start_at) + 2)
+            self.assertGreaterEqual(rpc[2]['epoch'], int(start_at) + 4)
+            started_ms = int((self.base / 'guest/test-run/started.tsv').read_text().split('\t')[1])
+            self.assertGreaterEqual(started_ms, int(start_at) * 1000)
+            self.assertLess(started_ms - int(start_at) * 1000, 1000)
+            self.assertIn('START_AT=' + start_at, hout)
+            self.assertTrue((self.base / 'host/test-run/controller.complete').exists())
+        finally:
+            if host.poll() is None:
+                host.terminate()
+                host.communicate(timeout=5)
+
+    def test_manual_controller_failed_gc_on_restores_zero_without_guest_io(self):
+        env = dict(self.make_host_mocks(), START_AT=str(int(time.time()) + 2), FAIL_THRESHOLD='920')
+        result = self.command('start_gc_manual.sh', env, args=('test-run', '100', '1'))
+        self.assertNotEqual(result.returncode, 0)
+        calls = [json.loads(line) for line in (self.base / 'calls.jsonl').read_text().splitlines()]
+        self.assertEqual([c['threshold'] for c in calls], [0, 920, 0])
+        self.assertTrue((self.base / 'host/test-run/controller.aborted').exists())
+        self.assertNotIn('rpc_success,920,gc_on', (self.base / 'host/test-run/control.csv').read_text())
+
+    def test_past_guest_schedule_is_rejected_before_fio(self):
+        result = self.command('start.sh', dict(self.env, START_AT=str(int(time.time()) - 1)))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.base / 'calls.jsonl').exists())
+
     def run_simulated_host(self, extra=None):
         host_env = self.make_host_mocks()
         if extra:

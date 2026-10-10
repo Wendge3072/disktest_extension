@@ -120,6 +120,12 @@ class VerifyReadPathTests(unittest.TestCase):
                 popen.assert_not_called()
                 self.assertFalse(output.exists())
 
+    def test_manual_controller_also_prevents_read_probes(self):
+        with patch.object(VERIFY.subprocess, 'check_output',
+                          return_value='123 bash /tmp/start_gc_manual.sh read-gc-001 25000 512\n'):
+            with self.assertRaisesRegex(RuntimeError, 'Existing GC controller PID 123'):
+                VERIFY.check_controllers()
+
 
 if __name__ == '__main__':
     unittest.main()

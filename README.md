@@ -40,7 +40,28 @@ Ada-Store / CSAL 的 fio 实验脚本。新增实验检验：**前台写入和 c
 
 不向读区写入或 unmap、设备和数据状态保持一致时，可以改变读取 IOPS、seed 并再次测试。重新初始化、重新预热、更换或覆盖读区后，需要重新检查。这里“读自 QLC”指用户数据；地址映射元数据仍可能访问 TLC。
 
-## 正式启动：只执行宿主机命令
+## 正式启动：两个窗口各一条命令
+
+两端更新仓库，完成数据准备和读区检查后，可以分别在宿主机和 Guest 启动。宿主机只控制 GC、记录日志；Guest 只运行 fio，不需要两端 SSH 通信。
+
+先在宿主机执行（`SPDK_LOG` 换成本次 vhost 的实际日志文件）：
+
+```bash
+sudo env SPDK_LOG=/home/nly/csal/git/spdk/log/gc_influnce_on_read \
+  bash /home/nly/csal/git/disktest_extension/gc_inf_onRead/start_gc_manual.sh read-gc-001 25000 512
+```
+
+宿主机先将门槛设为 0，默认约定两分钟后开始，并打印如下 Guest 命令。**把宿主机实际打印的一整行复制到 Guest 窗口，在开始时间之前执行**，不要复制这里的占位数字：
+
+```bash
+START_AT=<宿主机打印的时间戳> RUNTIME=600 GC_START=240 GC_THRESHOLD=920 bash /root/disktest_extension/gc_inf_onRead/start.sh read-gc-001 25000 512
+```
+
+Guest 等到约定时间开始 fio；宿主机按同一时间在第 240 秒将门槛设为 920，第 600 秒恢复为 0，然后各自结束。结果路径与原方式相同。两端系统时钟应同步；分析以 Guest 实际启动时间为准，并要求它与宿主机约定时间相差小于 1 秒。分析窗口仍排除 GC 切换后的前 60 秒。
+
+这个方式不负责预热和读区检查，也不自动发现另一端失败。任意一端提前退出时，应在另一个窗口停止对应脚本；Guest 的 Ctrl+C 会终止本次 fio，宿主机的 Ctrl+C 会尝试恢复门槛 0。只启动一组测试；不要同时运行旧 GC 控制器或下面的 SSH 自动启动方式。
+
+## 可选：宿主机通过 SSH 自动启动 Guest
 
 Guest 的默认脚本目录是 `/root/disktest_extension/gc_inf_onRead`。在宿主机的仓库目录执行：
 
