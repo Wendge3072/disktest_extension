@@ -27,7 +27,8 @@ REAL_RUN = subprocess.run
 
 
 class CompleteRangeTests(unittest.TestCase):
-    def simulate(self, temp, route='qlc', pin_error=False, changed_pin=False, short_read=False):
+    def simulate(self, temp, route='qlc', pin_error=False, changed_pin=False, short_read=False,
+                 partial_end=None):
         root = Path(temp)
         spdk = root / 'spdk'
         (spdk / 'scripts').mkdir(parents=True)
@@ -125,6 +126,8 @@ class CompleteRangeTests(unittest.TestCase):
                 '--read-floor-bytes', str(2 * VERIFY.sampler.GIB),
                 '--prefix-size-bytes', str(VERIFY.sampler.GIB),
                 '--ssh-control-path', str(socket), '--output-dir', str(output)]
+        if partial_end is not None:
+            argv += ['--prepare-end-bytes', str(partial_end)]
         with patch.object(VERIFY, 'live_vhost_identity', side_effect=pin_effect), \
              patch.object(VERIFY.sampler, 'check_controllers'), \
              patch.object(VERIFY.sampler.subprocess, 'run', side_effect=fake_run), \
@@ -153,6 +156,17 @@ class CompleteRangeTests(unittest.TestCase):
             self.assertEqual(result['read_profile']['device'], '/dev/vda')
             self.assertEqual(len(state['jobs']), 1)
             self.assertTrue(all(result['exact_checks'].values()))
+
+    def test_default_partial_end_accepts_64k_alignment_without_requiring_1m(self):
+        end = 11633520148480
+        self.assertEqual(end % 65536, 0)
+        self.assertNotEqual(end % VERIFY.MIB, 0)
+        with tempfile.TemporaryDirectory() as temp:
+            status, result, state = self.simulate(temp, partial_end=end)
+            self.assertEqual(status, 0)
+            self.assertEqual(result['range_protocol'], 'partial_sequential')
+            self.assertEqual(result['prepare_end_bytes'], end)
+            self.assertEqual(len(state['jobs']), 1)
 
     def test_tlc_l2p_reads_can_pass_exact_proof_when_conservative_bound_fails(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -213,7 +213,7 @@ def main(argv=None):
         arg_parser.error('Invalid conservative evidence threshold')
     read = read_profile(args.profile)
     if args.prepare_end_bytes is not None:
-        if (args.prepare_end_bytes % MIB or args.cache_guard_bytes % MIB
+        if (args.prepare_end_bytes % sampler.BLOCK or args.cache_guard_bytes % sampler.BLOCK
                 or not 0 < args.cache_guard_bytes < args.prepare_end_bytes < args.expected_capacity_bytes
                 or read['offset']+read['size'] > args.prepare_end_bytes-args.cache_guard_bytes):
             arg_parser.error('Read range must fit before partial prepare end minus the positive TLC guard')
