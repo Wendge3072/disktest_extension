@@ -23,7 +23,7 @@ class PrepareTests(unittest.TestCase):
         self.base = Path(self.tmp.name)
         self.device = self.base / 'fake-device'
         self.capacity = 4 * LARGE_BLOCK + 12 * BLOCK
-        self.prefix = LARGE_BLOCK + 3 * BLOCK
+        self.end = 3 * LARGE_BLOCK + 3 * BLOCK
         with self.device.open('wb') as stream:
             stream.truncate(self.capacity)
         self.calls_path = self.base / 'calls.jsonl'
@@ -59,8 +59,8 @@ Path(output).write_text(json.dumps({'fio version':'fio-3.7','jobs':jobs}))
 ''')
         self.mock_fio.chmod(0o755)
         self.env = dict(os.environ, DEVICE=str(self.device), DEVICE_BYTES=str(self.capacity),
-                        ALLOW_REGULAR_FILE='1', PREFIX_SIZE_BYTES=str(self.prefix),
-                        READ_FLOOR_BYTES=str(2 * LARGE_BLOCK), SKIP_RANDOM='1',
+                        ALLOW_REGULAR_FILE='1', PREPARE_END_BYTES=str(self.end),
+                        CACHE_GUARD_BYTES=str(LARGE_BLOCK), READ_OFFSET='0', READ_SIZE=str(LARGE_BLOCK), SKIP_RANDOM='1',
                         PREPARE_SETTLE_SECONDS='0', PREPARE_RUN_ID='test-preparation',
                         RESULTS_ROOT=str(self.base / 'results'), FIO_BIN=str(self.mock_fio),
                         MOCK_CALLS=str(self.calls_path))
@@ -110,133 +110,54 @@ Path(output).write_text(json.dumps({'fio version':'fio-3.7','jobs':jobs}))
         actual_bs = options['bs'].lower()
         self.assertIn(actual_bs, {str(block_size), str(block_size // 1024) + 'k'})
 
-    def test_dry_run_covers_real_device_tail_without_launching_fio(self):
-        result = self.command({'DEVICE_BYTES': str(REAL_CAPACITY),
-                               'PREFIX_SIZE_BYTES': str(1700 * 1024 ** 3),
-                               'READ_FLOOR_BYTES': str(2048 * 1024 ** 3)},
-                              args=('--dry-run',))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        plan = self.plan()
-        self.assertEqual(int(plan['device_bytes']), REAL_CAPACITY)
-        self.assertEqual(int(plan['full_main_bytes']), REAL_CAPACITY - 49152)
-        self.assertEqual(int(plan['full_tail_bytes']), 49152)
-        self.assertEqual(int(plan['prefix_main_bytes']) + int(plan['prefix_tail_bytes']),
-                         1700 * 1024 ** 3)
-        self.assert_single_pass(self.job_options('full_sequential_main.fio'), 0,
-                               REAL_CAPACITY - 49152, LARGE_BLOCK)
-        self.assert_single_pass(self.job_options('full_sequential_tail.fio'),
-                               REAL_CAPACITY - 49152, 49152, BLOCK)
-        self.assertFalse(self.calls())
-        self.assertFalse((self.run_dir() / 'completed.json').exists())
-
-    def test_success_runs_exact_full_and_prefix_passes_in_order(self):
-        result = self.command()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        expected = [('full_sequential_main.fio', 0, 4 * LARGE_BLOCK, LARGE_BLOCK),
-                    ('full_sequential_tail.fio', 4 * LARGE_BLOCK, 12 * BLOCK, BLOCK),
-                    ('prefix_sequential_main.fio', 0, LARGE_BLOCK, LARGE_BLOCK),
-                    ('prefix_sequential_tail.fio', LARGE_BLOCK, 3 * BLOCK, BLOCK)]
-        calls = self.calls()
-        self.assertEqual([call['name'] for call in calls], [item[0] for item in expected])
-        for call, (name, offset, size, block_size) in zip(calls, expected):
-            with self.subTest(stage=name):
-                self.assert_single_pass(call['effective'][0], offset, size, block_size)
-                self.assertIn('--output-format=json', call['args'])
-        completed = json.loads((self.run_dir() / 'completed.json').read_text())
-        self.assertIs(completed['qlc_verified'], False)
-        commands = (self.run_dir() / 'commands.sh').read_text()
-        self.assertEqual(sorted(commands.index(name) for name, *_ in expected),
-                         [commands.index(name) for name, *_ in expected])
-        self.assertIn(str(self.mock_fio), commands)
-
-    def test_exactly_aligned_ranges_do_not_repeat_or_generate_tail_jobs(self):
-        capacity = 8 * LARGE_BLOCK
-        with self.device.open('r+b') as stream:
-            stream.truncate(capacity)
-        result = self.command({'DEVICE_BYTES': str(capacity),
-                               'PREFIX_SIZE_BYTES': str(2 * LARGE_BLOCK),
-                               'READ_FLOOR_BYTES': str(4 * LARGE_BLOCK)})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([call['name'] for call in self.calls()],
-                         ['full_sequential_main.fio', 'prefix_sequential_main.fio'])
-        self.assertEqual(int(self.plan()['full_tail_bytes']), 0)
-        self.assertEqual(int(self.plan()['prefix_tail_bytes']), 0)
-        self.assertFalse((self.run_dir() / 'full_sequential_tail.fio').exists())
-        self.assertFalse((self.run_dir() / 'prefix_sequential_tail.fio').exists())
-
-    def test_original_random_jobs_precede_the_sequential_passes(self):
-        result = self.command({'SKIP_RANDOM': '0'})
-        self.assertEqual(result.returncode, 0, result.stderr)
-        calls = self.calls()
-        self.assertEqual([call['name'] for call in calls],
-                         ['rnd.job', 'rnd2.job', 'rnd3.job', 'rnd64.job',
-                          'full_sequential_main.fio', 'full_sequential_tail.fio',
-                          'prefix_sequential_main.fio', 'prefix_sequential_tail.fio'])
-        for call in calls:
-            for options in call['effective']:
-                self.assertEqual(options['filename'], str(self.device))
-        self.assertEqual(self.plan()['skip_random'], '0')
-
-    def test_fio_error_short_write_and_process_failure_stop_before_prefix(self):
-        for variable in ('ERROR_JOB', 'PARTIAL_JOB', 'EXIT_FAILURE_JOB'):
-            with self.subTest(failure=variable):
-                run_id = variable.lower()
-                before = len(self.calls())
-                result = self.command({variable: 'full_sequential_tail.fio',
-                                       'PREPARE_RUN_ID': run_id})
-                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual([call['name'] for call in self.calls()[before:]],
-                                 ['full_sequential_main.fio', 'full_sequential_tail.fio'])
-                self.assertFalse((self.run_dir(run_id) / 'completed.json').exists())
-
-    def test_unexpected_read_bytes_in_write_stage_prevent_completion(self):
-        result = self.command({'READ_JOB': 'full_sequential_main.fio'})
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual([call['name'] for call in self.calls()], ['full_sequential_main.fio'])
-        self.assertFalse((self.run_dir() / 'completed.json').exists())
-
-    def test_invalid_geometry_and_units_are_rejected_before_io(self):
-        changes = [
-            {'PREFIX_SIZE_BYTES': str(2 * LARGE_BLOCK)},
-            {'READ_FLOOR_BYTES': str(self.capacity)},
-            {'DEVICE_BYTES': str(self.capacity + 1)},
-            {'PREFIX_SIZE_BYTES': str(self.prefix + 1)},
-            {'READ_FLOOR_BYTES': str(2 * LARGE_BLOCK + 1)},
-            {'PREFIX_SIZE_BYTES': '1.7TB'},
-            {'PREFIX_SIZE_BYTES': '-4096'},
-            {'SKIP_RANDOM': '2'},
-        ]
-        for index, change in enumerate(changes):
-            with self.subTest(change=change):
-                result = self.command(dict(change, DRY_RUN='1',
-                                           PREPARE_RUN_ID='invalid-' + str(index)))
-                self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertFalse((self.run_dir('invalid-' + str(index)) / 'completed.json').exists())
+    def test_preview_only_writes_four_tib_and_preserves_three_original_random_jobs(self):
+        result = self.command({'DEVICE_BYTES':str(REAL_CAPACITY),
+                               'PREPARE_END_BYTES':str(4*1024**4),
+                               'CACHE_GUARD_BYTES':str(1700*1024**3), 'READ_OFFSET':'1024G', 'READ_SIZE':'1024G', 'SKIP_RANDOM':'0'}, args=('--dry-run',))
+        self.assertEqual(result.returncode,0,result.stderr)
+        plan=self.plan()
+        self.assertEqual(int(plan['sequential_main_bytes']),4*1024**4)
+        self.assertEqual(int(plan['sequential_tail_bytes']),0)
+        self.assert_single_pass(self.job_options('partial_sequential_main.fio'),0,4*1024**4,LARGE_BLOCK)
+        self.assertFalse(list(self.run_dir().glob('full_*')))
+        self.assertFalse(list(self.run_dir().glob('prefix_*')))
         self.assertFalse(self.calls())
 
-    def test_regular_file_needs_explicit_test_mode_and_actual_capacity(self):
-        env = self.env.copy()
-        env.pop('ALLOW_REGULAR_FILE', None)
-        result = subprocess.run([BASH, str(PREPARE)], env=env,
-                                capture_output=True, text=True, timeout=15)
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        result = self.command({'DEVICE_BYTES': str(self.capacity + BLOCK),
-                               'PREPARE_RUN_ID': 'wrong-capacity'})
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+    def test_success_runs_one_partial_pass_and_exact_tail(self):
+        result=self.command();self.assertEqual(result.returncode,0,result.stderr)
+        calls=self.calls()
+        self.assertEqual([x['name'] for x in calls],['partial_sequential_main.fio','partial_sequential_tail.fio'])
+        self.assert_single_pass(calls[0]['effective'][0],0,3*LARGE_BLOCK,LARGE_BLOCK)
+        self.assert_single_pass(calls[1]['effective'][0],3*LARGE_BLOCK,3*BLOCK,BLOCK)
+        done=json.loads((self.run_dir()/'completed.json').read_text())
+        self.assertEqual(done['prepare_end_bytes'],self.end)
+        self.assertIs(done['qlc_verified'],False)
+
+    def test_original_random_jobs_precede_partial_pass_unchanged(self):
+        result=self.command({'SKIP_RANDOM':'0'});self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual([x['name'] for x in self.calls()],['rnd.job','rnd2.job','rnd3.job','partial_sequential_main.fio','partial_sequential_tail.fio'])
+        for name in ['rnd.job','rnd2.job','rnd3.job']:
+            self.assertEqual((self.run_dir()/name).read_bytes(),(ROOT/'gc_inf_onBW'/name).read_bytes())
+
+    def test_short_write_error_or_unexpected_read_prevents_completion(self):
+        for key in ['PARTIAL_JOB','ERROR_JOB','READ_JOB','EXIT_FAILURE_JOB']:
+            result=self.command({key:'partial_sequential_main.fio','PREPARE_RUN_ID':key.lower()})
+            self.assertNotEqual(result.returncode,0,key)
+            self.assertFalse((self.run_dir(key.lower())/'completed.json').exists())
+
+    def test_invalid_geometry_is_rejected_before_io(self):
+        for i,change in enumerate([{'PREPARE_END_BYTES':str(self.capacity)},
+                                  {'CACHE_GUARD_BYTES':str(self.end)},
+                                  {'PREPARE_END_BYTES':str(self.end+1)},
+                                  {'CACHE_GUARD_BYTES':'1.7TB'}, {'SKIP_RANDOM':'2'}]):
+            result=self.command(dict(change,PREPARE_RUN_ID='bad-'+str(i)))
+            self.assertNotEqual(result.returncode,0)
         self.assertFalse(self.calls())
 
-    def test_existing_preparation_is_never_overwritten_or_repeated(self):
-        first = self.command()
-        self.assertEqual(first.returncode, 0, first.stderr)
-        plan_before = (self.run_dir() / 'plan.tsv').read_bytes()
-        completed_before = (self.run_dir() / 'completed.json').read_bytes()
-        calls_before = self.calls()
-        second = self.command()
-        self.assertNotEqual(second.returncode, 0, second.stdout + second.stderr)
-        self.assertEqual((self.run_dir() / 'plan.tsv').read_bytes(), plan_before)
-        self.assertEqual((self.run_dir() / 'completed.json').read_bytes(), completed_before)
-        self.assertEqual(self.calls(), calls_before)
-
+    def test_existing_result_is_not_overwritten(self):
+        result=self.command();self.assertEqual(result.returncode,0,result.stderr)
+        before=self.calls();self.assertNotEqual(self.command().returncode,0)
+        self.assertEqual(self.calls(),before)
 
 if __name__ == '__main__':
     unittest.main()

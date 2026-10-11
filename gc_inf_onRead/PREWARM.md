@@ -1,88 +1,63 @@
-# 准备 QLC 读区
+# 一次部分顺序写准备 QLC 读区
 
-当前 247 使用单个 FTL0：P4510 为 TLC cache，P5316 为 QLC base，Guest 设备为 `/dev/vda`。先准备数据，再独立确认读取来源，最后启动正式测试。
+保留原 `gc_inf_onBW` 的前三段全盘随机预热：`rnd.job → rnd2.job → rnd3.job`，各 1 小时，seed 分别为 2252、9917、4026。取消额外的 `rnd64.job`。随后只增加 **0–x% 一遍顺序写**，等待 600 秒；不再顺序覆盖全盘或重写前 1700 GiB。
 
-## IO 顺序
+| 地址区 | 用途 |
+|---|---|
+| 0–x% | 部分顺序预热，一次完整写入 |
+| 0–顺序预热终点减去 1700 GiB | 默认完整读区；实际核验后才能认定来自 QLC |
+| 顺序预热终点之后 | 正式写入；各次 fio 使用单独的 128 GiB 区间，向后推进 |
 
-| 顺序 | Guest 操作 | 目的 |
-| --- | --- | --- |
-| 1 | 原 `rnd.job`、`rnd2.job`、`rnd3.job`、`rnd64.job` 随机写预热 | 沿用原来的预热；已完成可跳过 |
-| 2 | 顺序写完整个 FTL 逻辑盘 | 写过每个地址，避免未写地址直接返回零 |
-| 3 | 再顺序覆盖 0–1700 GiB | 推动上一轮留在 TLC 的尾部数据下沉，最新写入集中在低地址 |
-| 4 | 停止 fio，等待 600 秒 | 给 compaction 等后台工作留出时间 |
-| 5 | 完整读取 2–3 TiB 并核对统计 | 独立确认正式读区实际位于 QLC |
+`layout.sh` 根据逻辑容量、IOPS 档位数、重复次数和每份 fio 的写区大小计算边界，预热、核验和两端测试使用同一计算。六档一轮共有 12 份 fio，各目标写量 120 GiB（含 ramp），总目标 1440 GiB；预留 12×128=1536 GiB 地址区。预算允许的最大 x 约 88.7%，**默认自动策略上限为 80%**，给正式写入额外地址余量，并保留部分原随机数据分布；80% 是初始实验设置，不是测出的最优值。六档三轮需预留 4608 GiB，自动减小到约 66.0%。
 
-顺序写按完整字节数结束，不按固定秒数截断。全盘主 job 使用 64 KiB 请求，盘尾不足 64 KiB 时另用 4 KiB 请求补齐；当前容量的尾部为 48 KiB。
+最大化 x 不能保证 GC 更持久：顺序写产生的无效数据也可能在准备过程中被 GC 回收。因此还需观察无效数据比例、最大 band 无效比例和实际 GC 搬运。数据不足时应调整准备或测量时长，不靠扩大 x 或降低有效性检查强行得到曲线。
 
-当前 TLC 数据区为 1746 GiB，compaction 在满 chunk 达到 80% 时启动，静止时可能保留约 1397 GiB 数据。1700 GiB 前缀覆盖提供推进余量，但等待时间和写入顺序本身不能证明读区已经下沉，需要随后检查。
+1700 GiB 是针对当前 P4510/CSAL 配置选取的缓存推进余量，不是读取来源证明。改缓存大小或 compaction 策略后要重新评估。**原来的随机预热选择全盘逻辑地址范围，但不保证实际写遍每个地址，所以缩小顺序写范围不等于物理盘出现大量空闲空间。** 正式控制器会在必要时主动回收，并检查空闲 band；不能只根据 offset 保证没有必要 GC。
 
-全盘逻辑覆盖会改变原随机预热的失效数据和空闲 band 分布，不保证保留原 GC 状态，也不保证每个物理 band 只含最新数据。正式测试仍要观察实际 GC 搬运。
+## Guest 准备
 
-## 1. 关闭旧测试，准备盘内数据
-
-宿主机和 Guest 都保存更新后的仓库。先结束旧 fio 与旧 GC 控制器，然后在宿主机将额外主动 GC 门槛设为 0：
+先结束旧 fio 和旧 GC 控制器。Host 将主动 GC 门槛设为 0：
 
 ```bash
 cd /home/nly/csal/git/spdk
 sudo scripts/rpc.py bdev_ftl_set_bggc_comp_threshold -b FTL0 -t 0
 ```
 
-必要 GC 和正常 compaction 仍按 FTL 规则运行。`prepare.sh` 不替你修改 GC 门槛。
-
-在 Guest 执行：
+Guest 第一次从原随机预热开始：
 
 ```bash
 cd /root/disktest_extension/gc_inf_onRead
-PREPARE_RUN_ID=prepare-seq-001 SKIP_RANDOM=1 bash prepare.sh
+PREPARE_RUN_ID=prepare-partial-001 bash prepare.sh
 ```
 
-`SKIP_RANDOM=1` 适用于已经完成原随机预热的状态；需要从随机预热开始时去掉它。每个结果名称只能使用一次。脚本保存实际 fio 配置、JSON、阶段记录和操作命令；错误或短写会停止流程。
-
-`completed.json` 表示规定写入已完成，其 `qlc_verified=false` 表示读取来源还需要检查。Guest 使用现有 fio、Bash 和 Python 2.7 或 Python 3。
-
-## 2. 宿主机独立检查读区
-
-在宿主机仓库生成对应配置，再执行完整读区检查：
-
-```bash
-cd /path/to/disktest_extension
-READ_IOPS=25000 DEVICE_BYTES=14541900267520 \
-  LOG_PREFIX=/tmp/read-gc-profile \
-  bash gc_inf_onRead/make_job.sh /tmp/read-gc-profile-seq-001.fio
-
-sudo python3 gc_inf_onRead/verify_qlc_range.py \
-  --profile /tmp/read-gc-profile-seq-001.fio \
-  --known-hosts /home/nly/csal/ada-fig5-guest-20261009.known_hosts \
-  --output-dir /home/nly/csal/git/spdk/log/qlc_range_verification/seq-001
-```
-
-配置文件和结果目录必须不存在。`25000` 是待校准示例；检查时实际使用 1 MiB 顺序读覆盖完整 1 TiB 读区，正式实验仍使用 4 KiB 随机读。
-
-工具先等后台静止，再对照 fio、FTL 分类计数与两块物理盘计数，要求用户数据完整来自 QLC；地址映射元数据可以访问 TLC。它不修改 GC 门槛、不提交 fio 写入，正常元数据写回会单独记录。扫描最长 7200 秒，等待后台静止最长 600 秒，可用 `--scan-timeout`、`--wait-timeout` 调整。
-
-**退出 0，并且 `verification.json` 中 `passed=true`、`complete=true`，再进入正式实验。** 结果留在宿主机即可，不需要复制 JSON 到 Guest。这个独立检查工具仍使用已审计的 SPDK 构建；重编译后须重新核对读取分类。
-
-## 3. 两个窗口启动正式实验
-
-参照 [README.md 的两个窗口方式](../README.md#正式启动两个窗口各一条命令)，先启动宿主机 `start_gc_manual.sh`，再将其打印的命令复制到 Guest。这个控制器不使用 SSH；两端按同一个约定开始时间运行。
-
-下面是仍然保留的 SSH 自动启动方式，两种方式只选择一种：
-
-```bash
-cd /path/to/disktest_extension/gc_inf_onRead
-sudo bash start_gc_host.sh read-gc-001 25000 512
-```
-
-宿主机通过一次 SSH 直接启动 Guest 的 fio，并按返回的启动时间执行 T=0 → 240 秒 T=920 → 600 秒 T=0。不需要提前在 Guest 启动等待脚本。连接、路径等可通过 `SSH_PORT`、`KNOWN_HOSTS`、`SPDK_DIR`、`SPDK_LOG`、`GUEST_DIR` 配置，见 [README.md](../README.md)。
-
-默认写区为 0–320 GiB，读区为 2–3 TiB。正式测试不再自动检查 JSON、二进制哈希或 FTL UUID。检查后应保护读区：不向其写入或 unmap；不要重新初始化设备。重新预热、更换或覆盖读区后，再做一次独立检查。
-
-## 仅预览预热配置
+如果已完成原三段随机预热，保留这个盘状态，只补部分顺序写：
 
 ```bash
 cd /root/disktest_extension/gc_inf_onRead
-DRY_RUN=1 DEVICE_BYTES=14541900267520 \
-  PREPARE_RUN_ID=prepare-preview-001 bash prepare.sh
+SKIP_RANDOM=1 PREPARE_RUN_ID=prepare-partial-001 bash prepare.sh
 ```
 
-此命令不发 IO。高级配置中的 `PREFIX_SIZE_BYTES`、`READ_FLOOR_BYTES` 单位为整数字节，默认分别为 `1825361100800`、`2199023255552`；修改时须让完整检查的 `--prefix-size-bytes`、`--read-floor-bytes` 保持一致，并重新评估缓存推进余量。
+已有相同布局的部分顺序写及本次读区验证时，正式扫描不会再次预热。`completed.json` 只证明规定写量完成，不证明读自 QLC。错误、短写、重复结果目录都会停止。
+
+空间设置集中在 `layout.sh`。默认 `PREPARE_PERCENT=auto`、`CACHE_GUARD_BYTES=1825361100800`（1700 GiB）。可设整数百分比，例如 `PREPARE_PERCENT=80`，或精确字节数 `PREPARE_END_BYTES`。自定义百分比超过正式扫描预算允许的上限时拒绝执行。改变档位、REPEATS、WRITE_SIZE 会改变自动边界，必须在准备、核验、Host、Guest 使用相同设置；不要预热后随意改变矩阵导致读写区域变化。
+
+这里全部使用二进制 TiB/GiB；默认读取长度向下对齐到 1 MiB。
+
+## Host 验证整个读区
+
+核验脚本自动生成相同布局的配置，无需手算终点。检查过程中不要运行正式 fio，也不要开启主动 GC。
+
+```bash
+cd /home/nly/csal/git/disktest_extension
+sudo bash gc_inf_onRead/verify_prepared.sh partial-001
+```
+
+如果准备时指定了 `REPEATS=3` 等矩阵设置，此处也用 `sudo env REPEATS=3 ...` 传递。现有 Guest SSH 认证要可用；known_hosts 只校验服务器身份，不提供认证。此独立工具仍使用已审计的 SPDK 构建，要求 USER 数据全部从 QLC 读取，TLC 读取只能对应 L2P 元数据。必须退出 0，且输出目录下 `verification/verification.json` 中 `passed=true`、`complete=true`，再启动 [多档实验](SWEEP.md)。
+
+默认一轮的整个读区约 8.92 TiB，完整核验会比此前 1 TiB 扫描更耗时；这是证明整个正式读取范围都已映射且位于 QLC 的代价。不能用旧 2–3 TiB 验证或小样本测试替代。
+
+只生成准备配置、不发 IO：
+
+```bash
+DRY_RUN=1 DEVICE_BYTES=14541900267520 PREPARE_RUN_ID=preview-partial bash prepare.sh
+```

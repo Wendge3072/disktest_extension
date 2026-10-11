@@ -190,6 +190,9 @@ def parser():
                         help='Formal read addresses must be at or above this boundary')
     result.add_argument('--prefix-size-bytes', type=int, default=1700 * sampler.GIB,
                         help='Reserved low-address preparation/write region, recorded for the formal-test gate')
+    result.add_argument('--prepare-end-bytes', type=int,
+                        help='Use partial-sequential layout: read end must precede this minus --cache-guard-bytes')
+    result.add_argument('--cache-guard-bytes', type=int, default=1700 * sampler.GIB)
     return result
 
 
@@ -209,7 +212,12 @@ def main(argv=None):
     if not 0 < args.minimum_qlc_fraction <= 1:
         arg_parser.error('Invalid conservative evidence threshold')
     read = read_profile(args.profile)
-    if (args.read_floor_bytes <= 0 or args.read_floor_bytes % MIB
+    if args.prepare_end_bytes is not None:
+        if (args.prepare_end_bytes % MIB or args.cache_guard_bytes % MIB
+                or not 0 < args.cache_guard_bytes < args.prepare_end_bytes < args.expected_capacity_bytes
+                or read['offset']+read['size'] > args.prepare_end_bytes-args.cache_guard_bytes):
+            arg_parser.error('Read range must fit before partial prepare end minus the positive TLC guard')
+    elif (args.read_floor_bytes <= 0 or args.read_floor_bytes % MIB
             or args.prefix_size_bytes <= 0 or args.prefix_size_bytes % MIB
             or args.prefix_size_bytes >= args.read_floor_bytes
             or read['offset'] < args.read_floor_bytes):
@@ -236,6 +244,9 @@ def main(argv=None):
               'scope': SCOPE, 'read_profile': read, 'ftl_name': args.ftl_name,
               'read_floor_bytes': args.read_floor_bytes,
               'prefix_size_bytes': args.prefix_size_bytes,
+              'range_protocol': 'partial_sequential' if args.prepare_end_bytes is not None else 'full_cover_prefix',
+              'prepare_end_bytes': args.prepare_end_bytes,
+              'cache_guard_bytes': args.cache_guard_bytes if args.prepare_end_bytes is not None else None,
               'source_profile_sha256': sha256_file(args.profile),
               'capacity_bytes': None, 'bdev_identity': None,
               'binary_sha256': None, 'scan_metrics': None, 'exact_checks': {},

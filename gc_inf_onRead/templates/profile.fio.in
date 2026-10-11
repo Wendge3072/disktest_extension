@@ -7,14 +7,15 @@ filename=@@DEVICE@@
 numjobs=1
 time_based=1
 runtime=@@RUNTIME@@
+ramp_time=@@RAMP_TIME@@
 group_reporting=0
+clat_percentiles=1
+percentile_list=50:95:99:99.9:99.99
 log_avg_msec=1000
-log_hist_msec=1000
-log_hist_coarseness=0
 log_unix_epoch=1
 
 [foreground_write]
-rw=randwrite
+rw=@@WRITE_RW@@
 bs=64k
 iodepth=@@WRITE_QD@@
 rate=,@@WRITE_MIB@@m
@@ -24,7 +25,6 @@ io_size=@@WRITE_SIZE@@
 randseed=@@WRITE_SEED@@
 write_bw_log=@@LOG_PREFIX@@_foreground_write
 write_iops_log=@@LOG_PREFIX@@_foreground_write
-write_hist_log=@@LOG_PREFIX@@_foreground_write
 
 [foreground_read]
 rw=randread
@@ -36,4 +36,3 @@ size=@@READ_SIZE@@
 randseed=@@READ_SEED@@
 write_bw_log=@@LOG_PREFIX@@_foreground_read
 write_iops_log=@@LOG_PREFIX@@_foreground_read
-write_hist_log=@@LOG_PREFIX@@_foreground_read

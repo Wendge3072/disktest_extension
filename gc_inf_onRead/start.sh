@@ -38,11 +38,8 @@ RESULT_DIR=$RESULTS_ROOT/$RUN_ID
 mkdir -- "$RESULT_DIR" # Refuse to overwrite an earlier result.
 export LOG_PREFIX=$RESULT_DIR/profile METADATA_FILE=$RESULT_DIR/request.tsv
 bash "$HERE/make_job.sh" "$RESULT_DIR/profile.fio"
-# Keep all foreground writes inside the prefix prepared for this experiment.
-write_end=$(awk -F '\t' '/^write_offset_bytes\t/ {o=$2} /^write_size_bytes\t/ {s=$2} END {printf "%.0f", o+s}' "$METADATA_FILE")
-(( write_end <= ${PREFIX_SIZE_BYTES:-1825361100800} )) || {
-    echo 'Write range must stay inside the prepared low-address prefix' >&2; exit 1;
-}
+# make_job.sh validates capacity, disjoint ranges and the complete ramp budget.
+# The sweep validates its partial-preparation geometry before issuing any IO.
 if [[ $DRY_RUN == 1 ]]; then
     echo "$RESULT_DIR"
     exit 0

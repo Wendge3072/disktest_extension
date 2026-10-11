@@ -36,21 +36,22 @@ def parse_spdk(path, start_ms, timezone):
         'Max Invalidity': 'max_invalid_percent',
     }
     rows = []
-    for line in path.open(errors='replace'):
-        match = pattern.match(line)
-        if not match:
-            continue
-        stamp, ftl, message = match.groups()
-        try:
-            instant = dt.datetime.strptime(stamp, '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=timezone)
-        except ValueError:
-            continue
-        elapsed = instant.timestamp() - start_ms / 1000.0
-        for label, key in fields.items():
-            value = re.search(re.escape(label) + r':\s*([0-9]+(?:\.[0-9]+)?)', message)
-            if value:
-                rows.append({'t': elapsed, 'ftl': ftl, 'key': key, 'value': float(value[1])})
-                break
+    with path.open(errors='replace') as stream:
+        for line in stream:
+            match = pattern.match(line)
+            if not match:
+                continue
+            stamp, ftl, message = match.groups()
+            try:
+                instant = dt.datetime.strptime(stamp, '%Y-%m-%d %H:%M:%S.%f').replace(tzinfo=timezone)
+            except ValueError:
+                continue
+            elapsed = instant.timestamp() - start_ms / 1000.0
+            for label, key in fields.items():
+                value = re.search(re.escape(label) + r':\s*([0-9]+(?:\.[0-9]+)?)', message)
+                if value:
+                    rows.append({'t': elapsed, 'ftl': ftl, 'key': key, 'value': float(value[1])})
+                    break
     return rows
 
 
@@ -96,6 +97,7 @@ def main():
     parser.add_argument('--minimum-free-bands', type=int, default=5)
     parser.add_argument('--fio-time-base', choices=['unix_ms', 'elapsed_ms'], default='unix_ms', help='Generated profile uses unix_ms; select elapsed_ms only for explicitly relative fio logs')
     parser.add_argument('--hist-layout', choices=['auto', 'fio-3.7'], default='auto', help='auto requires fio.version or JSON confirming fio-3.7; explicit override requires independent layout verification')
+    parser.add_argument('--histogram-copy-audited', action='store_true', help='Only for a source/binary audited fix of the fio-3.7 half-copy bug; format/version alone is insufficient')
     args = parser.parse_args()
     offset = re.fullmatch(r'([+-])(\d{2}):(\d{2})', args.spdk_utc_offset)
     if not offset or int(offset[2]) > 23 or int(offset[3]) > 59:
@@ -150,7 +152,9 @@ def main():
     source_json, fio_json = full_run_json(guest)
     version_path = guest / 'fio.version'
     fio_version = version_path.read_text().strip() if version_path.exists() else (fio_json or {}).get('fio version')
-    supported_hist = args.hist_layout == 'fio-3.7' or fio_version == 'fio-3.7'
+    supported_hist = (args.hist_layout == 'fio-3.7' or fio_version == 'fio-3.7') and args.histogram_copy_audited
+    if fio_version == 'fio-3.7' and not args.histogram_copy_audited:
+        warnings.append('fio-3.7 histogram upper half is not trustworthy without an audited copy fix. Use separate phase JSONs via start_sweep.sh/analyze_sweep.py.')
     read_hist_files = [p for p in hist_files if 'foreground_read' in p.name]
     windows = [('baseline', 60.0, 240.0), ('gc', gc_start + 60.0, gc_start + 240.0)]
     summaries = {}

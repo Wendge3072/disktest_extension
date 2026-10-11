@@ -81,15 +81,17 @@ Path(out).write_text(json.dumps({'fio version':'fio-3.7','jobs':[]}))
         config.read_string(result.stdout)
         self.assertEqual(config['global']['group_reporting'], '0')
         self.assertEqual(config['global']['log_unix_epoch'], '1')
-        self.assertEqual(config['global']['log_hist_coarseness'], '0')
+        self.assertEqual(config['global']['ramp_time'], '0')
+        self.assertEqual(config['global']['percentile_list'], '50:95:99:99.9:99.99')
+        self.assertNotIn('log_hist_msec', config['global'])
         self.assertEqual(config['foreground_write']['rw'], 'randwrite')
         self.assertEqual(config['foreground_read']['rw'], 'randread')
         self.assertEqual(config['global']['numjobs'], '1')
         self.assertEqual(config.sections(), ['global', 'foreground_write', 'foreground_read'])
         self.assertNotIn('stonewall', result.stdout)
         self.assertNotIn('new_group', result.stdout)
-        self.assertNotEqual(config['foreground_read']['write_hist_log'],
-                            config['foreground_write']['write_hist_log'])
+        self.assertNotIn('write_hist_log', config['foreground_read'])
+        self.assertNotIn('write_hist_log', config['foreground_write'])
         self.assertFalse((self.base / 'calls.jsonl').exists())
 
     def test_invalid_ranges_and_write_budget_are_rejected_before_io(self):
@@ -139,9 +141,9 @@ Path(out).write_text(json.dumps({'fio version':'fio-3.7','jobs':[]}))
         self.assertEqual(request['write_mib'], '2')
         self.assertFalse((self.base / 'calls.jsonl').exists())
 
-    def test_write_range_must_stay_in_prepared_prefix(self):
+    def test_write_range_overlap_is_rejected(self):
         env = dict(self.env, DRY_RUN='1', DEVICE_BYTES=str(4 * 1024 ** 4),
-                   WRITE_OFFSET='1690G', WRITE_SIZE='32G', READ_OFFSET='2048G', READ_SIZE='1024G')
+                   WRITE_OFFSET='2040G', WRITE_SIZE='32G', READ_OFFSET='2048G', READ_SIZE='1024G')
         result = self.command('start.sh', env)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.base / 'calls.jsonl').exists())
@@ -178,7 +180,7 @@ if str(threshold)==os.environ.get('FAIL_THRESHOLD'): raise SystemExit(23)
 
     def test_two_terminal_schedule_runs_without_ssh_or_host_launching_fio(self):
         host_env = self.make_host_mocks()
-        start_at = str(int(time.time()) + 2)
+        start_at = str(int(time.time()) + 4)
         host_env['START_AT'] = start_at
         guest_env = dict(self.env, START_AT=start_at)
         host = subprocess.Popen([BASH, str(NEW / 'start_gc_manual.sh'), 'test-run', '100', '1'],
@@ -208,7 +210,7 @@ if str(threshold)==os.environ.get('FAIL_THRESHOLD'): raise SystemExit(23)
                 host.communicate(timeout=5)
 
     def test_manual_controller_failed_gc_on_restores_zero_without_guest_io(self):
-        env = dict(self.make_host_mocks(), START_AT=str(int(time.time()) + 2), FAIL_THRESHOLD='920')
+        env = dict(self.make_host_mocks(), START_AT=str(int(time.time()) + 8), FAIL_THRESHOLD='920')
         result = self.command('start_gc_manual.sh', env, args=('test-run', '100', '1'))
         self.assertNotEqual(result.returncode, 0)
         calls = [json.loads(line) for line in (self.base / 'calls.jsonl').read_text().splitlines()]

@@ -2,6 +2,10 @@
 # Generate a fio profile and validated protocol metadata; never issue IO.
 set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# Keep the old 600 s single-run write budget usable; sweeps explicitly pass
+# their 128 GiB slots and use separate baseline/gc phases.
+if [[ ${PHASE:-mixed} == mixed ]]; then WRITE_SIZE=${WRITE_SIZE:-320G}; fi
+if [[ -z ${READ_OFFSET+x} || -z ${READ_SIZE+x} || -z ${WRITE_OFFSET+x} ]]; then source "$HERE/layout.sh"; fi
 die() { echo "make_job.sh: $*" >&2; exit 1; }
 integer() {
     local value=$1 label=$2 minimum=${3:-0}
@@ -51,6 +55,11 @@ RUN_ID=${RUN_ID:-profile}
 READ_IOPS=$(integer "${READ_IOPS:?Set READ_IOPS to a positive target IOPS}" READ_IOPS 1)
 WRITE_MIB=$(integer "${WRITE_MIB:-512}" WRITE_MIB 1)
 RUNTIME=$(integer "${RUNTIME:-600}" RUNTIME 1)
+RAMP_TIME=$(integer "${RAMP_TIME:-0}" RAMP_TIME)
+PHASE=${PHASE:-mixed}
+WRITE_RW=${WRITE_RW:-randwrite}
+[[ $WRITE_RW == write || $WRITE_RW == randwrite ]] || die 'WRITE_RW must be write or randwrite'
+[[ $PHASE == mixed || $PHASE == baseline || $PHASE == gc ]] || die 'PHASE must be mixed, baseline or gc'
 GC_START=$(integer "${GC_START:-240}" GC_START 1)
 GC_THRESHOLD=$(integer "${GC_THRESHOLD:-920}" GC_THRESHOLD 1)
 READY_TIMEOUT=$(integer "${READY_TIMEOUT:-900}" READY_TIMEOUT 1)
@@ -58,23 +67,24 @@ READ_QD=$(integer "${READ_QD:-32}" READ_QD 1)
 WRITE_QD=$(integer "${WRITE_QD:-128}" WRITE_QD 1)
 READ_SEED=$(integer "${READ_SEED:-2252}" READ_SEED 1)
 WRITE_SEED=$(integer "${WRITE_SEED:-9001}" WRITE_SEED 1)
-(( GC_START < RUNTIME )) || die 'GC_START must be less than RUNTIME'
+[[ $PHASE != mixed ]] || (( GC_START < RUNTIME )) || die 'GC_START must be less than RUNTIME'
 if [[ -z ${DEVICE_BYTES:-} ]]; then
     [[ -b $DEVICE ]] || die 'Set DEVICE_BYTES for configuration-only or regular-file testing'
     DEVICE_BYTES=$(blockdev --getsize64 "$DEVICE")
 fi
 DEVICE_BYTES=$(integer "$DEVICE_BYTES" DEVICE_BYTES 1)
-READ_SIZE_BYTES=$(bytes "${READ_SIZE:-1024G}" READ_SIZE)
-WRITE_SIZE_BYTES=$(bytes "${WRITE_SIZE:-320G}" WRITE_SIZE)
-READ_OFFSET_BYTES=$(offset_bytes "${READ_OFFSET:-2048G}" READ_OFFSET 4096)
-WRITE_OFFSET_BYTES=$(offset_bytes "${WRITE_OFFSET:-0}" WRITE_OFFSET 65536)
+READ_SIZE_BYTES=$(bytes "$READ_SIZE" READ_SIZE)
+WRITE_SIZE_BYTES=$(bytes "${WRITE_SIZE:-128G}" WRITE_SIZE)
+READ_OFFSET_BYTES=$(offset_bytes "$READ_OFFSET" READ_OFFSET 4096)
+WRITE_OFFSET_BYTES=$(offset_bytes "$WRITE_OFFSET" WRITE_OFFSET 65536)
 (( READ_SIZE_BYTES > 0 && READ_SIZE_BYTES % 4096 == 0 )) || die 'READ_SIZE must be positive and 4KiB-aligned'
 (( WRITE_SIZE_BYTES > 0 && WRITE_SIZE_BYTES % 65536 == 0 )) || die 'WRITE_SIZE must be positive and 64KiB-aligned'
 (( READ_SIZE_BYTES <= DEVICE_BYTES && READ_OFFSET_BYTES <= DEVICE_BYTES - READ_SIZE_BYTES )) || die 'Read range exceeds device capacity'
 (( WRITE_SIZE_BYTES <= DEVICE_BYTES && WRITE_OFFSET_BYTES <= DEVICE_BYTES - WRITE_SIZE_BYTES )) || die 'Write range exceeds device capacity'
 (( READ_OFFSET_BYTES >= WRITE_OFFSET_BYTES + WRITE_SIZE_BYTES || WRITE_OFFSET_BYTES >= READ_OFFSET_BYTES + READ_SIZE_BYTES )) || die 'Read and write ranges overlap'
 # Division avoids overflow for unreasonable user-supplied runtime/rate values.
-(( WRITE_MIB <= WRITE_SIZE_BYTES / 1048576 / RUNTIME )) || die 'Write budget exceeds WRITE_SIZE: enlarge the write range or shorten runtime'
+(( RUNTIME <= 2147483647 && RAMP_TIME <= 2147483647 )) || die 'Runtime/ramp too large'
+(( WRITE_MIB <= WRITE_SIZE_BYTES / 1048576 / (RUNTIME + RAMP_TIME) )) || die 'Write budget including ramp exceeds WRITE_SIZE: enlarge the write range or shorten runtime'
 
 JOB_FILE=${JOB_FILE:-${1:--}}
 [[ $# -le 1 ]] || die 'Usage: make_job.sh [OUTPUT_JOB]'
@@ -89,7 +99,9 @@ render() {
     while IFS= read -r line || [[ -n $line ]]; do
         line=${line//@@DEVICE@@/$DEVICE}
         line=${line//@@RUNTIME@@/$RUNTIME}
+        line=${line//@@RAMP_TIME@@/$RAMP_TIME}
         line=${line//@@WRITE_MIB@@/$WRITE_MIB}
+        line=${line//@@WRITE_RW@@/$WRITE_RW}
         line=${line//@@READ_IOPS@@/$READ_IOPS}
         line=${line//@@WRITE_OFFSET@@/$WRITE_OFFSET_BYTES}
         line=${line//@@WRITE_SIZE@@/$WRITE_SIZE_BYTES}
@@ -107,6 +119,8 @@ metadata() {
     printf 'schema\t1\nrun_id\t%s\ndevice\t%s\nwrite_mib\t%s\nread_iops\t%s\nruntime\t%s\ngc_start\t%s\ngc_threshold\t%s\nread_offset_bytes\t%s\nread_size_bytes\t%s\nwrite_offset_bytes\t%s\nwrite_size_bytes\t%s\n' \
         "$RUN_ID" "$DEVICE" "$WRITE_MIB" "$READ_IOPS" "$RUNTIME" "$GC_START" "$GC_THRESHOLD" \
         "$READ_OFFSET_BYTES" "$READ_SIZE_BYTES" "$WRITE_OFFSET_BYTES" "$WRITE_SIZE_BYTES"
+    printf 'phase\t%s\nramp_time\t%s\nread_qd\t%s\nwrite_qd\t%s\nread_seed\t%s\nwrite_seed\t%s\nlatency_source\tphase_json_clat_ns\n' "$PHASE" "$RAMP_TIME" "$READ_QD" "$WRITE_QD" "$READ_SEED" "$WRITE_SEED"
+    printf 'write_rw\t%s\n' "$WRITE_RW"
 }
 if [[ $JOB_FILE == - ]]; then render
 else

@@ -43,7 +43,7 @@ class HistogramTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 histogram.merge_window([path], 60, 240, 0)
 
-    def test_analyzer_uses_epoch_and_phase_histograms_not_json_p99(self):
+    def test_legacy_analyzer_rejects_unaudited_fio37_histograms_and_whole_run_p99(self):
         with tempfile.TemporaryDirectory() as tmp:
             base=Path(tmp);guest=base/'guest';host=base/'host';guest.mkdir();host.mkdir()
             started=1791504000000
@@ -70,8 +70,9 @@ class HistogramTests(unittest.TestCase):
             summary=json.loads((guest/'analysis/summary.json').read_text())
             self.assertEqual(summary['windows']['baseline']['read_iops_log']['mean_iops'],100)
             self.assertEqual(summary['windows']['gc']['read_iops_log']['mean_iops'],80)
-            self.assertEqual(summary['windows']['baseline']['read_p99_ns'],127)
-            self.assertEqual(summary['windows']['gc']['read_p99_ns'],129)
+            self.assertIsNone(summary['windows']['baseline']['read_p99_ns'])
+            self.assertIsNone(summary['windows']['gc']['read_p99_ns'])
+            self.assertTrue(any('upper half' in msg for msg in summary['warnings']))
             self.assertIsNone(summary['windows']['gc']['qlc_foreground_read_fraction'])
             self.assertFalse(any('completion marker invalid' in msg for msg in summary['warnings']))
 

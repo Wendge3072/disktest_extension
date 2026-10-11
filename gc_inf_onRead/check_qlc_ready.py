@@ -32,15 +32,23 @@ def validate(proof, profile, capacity):
             or read.get('bs') != '4k' or read.get('direct') != '1'):
         raise ValueError('Formal read device/range differs from the completely verified range')
     prefix, floor = proof.get('prefix_size_bytes'), proof.get('read_floor_bytes')
-    if (isinstance(prefix, bool) or isinstance(floor, bool)
+    partial = proof.get('range_protocol') == 'partial_sequential'
+    if partial:
+        end,guard=proof.get('prepare_end_bytes'),proof.get('cache_guard_bytes')
+        if (isinstance(end,bool) or isinstance(guard,bool)
+                or not isinstance(end,(int,type(2**64))) or not isinstance(guard,(int,type(2**64)))
+                or not 0 < guard < end < capacity or verified['offset']+verified['size'] > end-guard):
+            raise ValueError('Invalid partial-sequential read range/TLC guard')
+    elif (isinstance(prefix, bool) or isinstance(floor, bool)
             or not isinstance(prefix, (int, type(2**64)))
             or not isinstance(floor, (int, type(2**64)))
             or not 0 < prefix < floor <= verified['offset']):
         raise ValueError('Missing/invalid protected read floor and prefix limits')
-    if (write.get('filename') != verified['device'] or write.get('rw') != 'randwrite'
+    if (write.get('filename') != verified['device'] or write.get('rw') not in ('randwrite','write')
             or int(write['offset']) < 0 or int(write['size']) <= 0
-            or int(write['offset']) + int(write['size']) > prefix):
-        raise ValueError('Formal writes must stay inside the low-address prefix')
+            or int(write['offset']) + int(write['size']) > capacity
+            or (int(write['offset']) < end if partial else int(write['offset'])+int(write['size']) > prefix)):
+        raise ValueError('Formal write range violates the verified preparation layout')
     metrics = proof.get('scan_metrics', {})
     size = verified['size']
     if any(metrics.get(key) != size for key in ('fio_read_bytes', 'ftl_logical_read_bytes',

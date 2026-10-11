@@ -71,7 +71,7 @@ class VerifyReadPathTests(unittest.TestCase):
                         self.assertIn('rw=randread', job)
                         self.assertNotIn('randwrite', job)
                         self.assertNotIn('foreground_write', job)
-                        self.assertIn('offset=2199023255552', job)
+                        self.assertIn('offset=0', job)
                         self.assertIn('io_size=67108864', job)
                         self.assertIn('--readonly', cmd[-1])
                         self.assertIn('timeout --signal=TERM', cmd[-1])

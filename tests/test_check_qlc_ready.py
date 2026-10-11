@@ -63,6 +63,20 @@ def profile_fixture():
 
 
 class CheckQlcReadyTests(unittest.TestCase):
+    def test_partial_pass_proof_allows_only_later_disjoint_writes(self):
+        proof=proof_fixture();profile=profile_fixture()
+        proof.update(range_protocol='partial_sequential',prepare_end_bytes=4096*GIB,cache_guard_bytes=1700*GIB)
+        proof['read_profile']['offset']=1024*GIB
+        profile['foreground_read']['offset']=str(1024*GIB)
+        profile['foreground_write'].update(rw='write',offset=str(4096*GIB),size=str(128*GIB))
+        MODULE.validate(proof,profile,CAPACITY)
+        profile['foreground_write']['offset']=str(4000*GIB)
+        self.assert_rejected(proof,profile)
+        profile['foreground_write']['offset']=str(4096*GIB)
+        proof['read_profile']['offset']=2048*GIB
+        profile['foreground_read']['offset']=str(2048*GIB)
+        self.assert_rejected(proof,profile)
+
     def assert_rejected(self, proof, profile=None, capacity=CAPACITY):
         with self.assertRaises((ValueError, KeyError, TypeError)):
             MODULE.validate(proof, profile or profile_fixture(), capacity)

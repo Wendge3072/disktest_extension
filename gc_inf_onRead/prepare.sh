@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guest: one full sequential cover, then a prefix cover, after random conditioning.
+# Guest: original random conditioning, then ONE partial sequential pass.
 # Completion proves writes; verify_qlc_range.py separately proves QLC residency.
 set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -30,17 +30,20 @@ else
     die 'DEVICE must be a raw block device; configuration-only needs DRY_RUN and DEVICE_BYTES'
 fi
 DEVICE_BYTES=$(integer "$DEVICE_BYTES" DEVICE_BYTES)
-# Exact integer GiB defaults; avoid ambiguous decimal TB and binary TiB.
-PREFIX_SIZE_BYTES=$(integer "${PREFIX_SIZE_BYTES:-1825361100800}" PREFIX_SIZE_BYTES)
-READ_FLOOR_BYTES=$(integer "${READ_FLOOR_BYTES:-2199023255552}" READ_FLOOR_BYTES)
+source "$HERE/layout.sh"
+# The suffix is allowed to remain in TLC. No full-device or second-prefix pass.
+PREPARE_END_BYTES=$(integer "$PREPARE_END_BYTES" PREPARE_END_BYTES)
+CACHE_GUARD_BYTES=$(integer "$CACHE_GUARD_BYTES" CACHE_GUARD_BYTES)
 PREPARE_SETTLE_SECONDS=$(integer "${PREPARE_SETTLE_SECONDS:-600}" PREPARE_SETTLE_SECONDS)
 (( DEVICE_BYTES > 0 && DEVICE_BYTES % 4096 == 0 )) || die 'Capacity must be positive and 4KiB aligned'
-(( PREFIX_SIZE_BYTES > 0 && PREFIX_SIZE_BYTES % 4096 == 0 )) || die 'Prefix must be positive and 4KiB aligned'
-(( READ_FLOOR_BYTES % 4096 == 0 && PREFIX_SIZE_BYTES < READ_FLOOR_BYTES && READ_FLOOR_BYTES < DEVICE_BYTES )) || die 'Require prefix < read floor < capacity, all 4KiB aligned'
+(( PREPARE_END_BYTES > CACHE_GUARD_BYTES && PREPARE_END_BYTES < DEVICE_BYTES && PREPARE_END_BYTES % 4096 == 0 && CACHE_GUARD_BYTES > 0 && CACHE_GUARD_BYTES % 4096 == 0 )) || die 'Require 0 < cache guard < partial write end < capacity, all 4KiB aligned'
+read_start=$(layout_bytes "$READ_OFFSET")
+read_length=$(layout_bytes "$READ_SIZE")
+(( read_start%4096==0 && read_length>0 && read_length%4096==0 && read_start+read_length<=PREPARE_END_BYTES-CACHE_GUARD_BYTES )) || die 'Read range does not fit before partial write end minus TLC guard'
 UPSTREAM_DIR=${UPSTREAM_DIR:-$HERE/../gc_inf_onBW}
 UPSTREAM_DIR=$(cd -- "$UPSTREAM_DIR" && pwd)
 if [[ $SKIP_RANDOM == 0 ]]; then
-    for job in rnd.job rnd2.job rnd3.job rnd64.job; do
+    for job in rnd.job rnd2.job rnd3.job; do
         [[ -f $UPSTREAM_DIR/$job ]] || die "Missing upstream job $job"
     done
 fi
@@ -51,12 +54,11 @@ mkdir -p -- "$RESULTS_ROOT"
 RESULTS_ROOT=$(cd -- "$RESULTS_ROOT" && pwd)
 RESULT_DIR=$RESULTS_ROOT/$PREPARE_RUN_ID
 mkdir -- "$RESULT_DIR" || die 'Preparation output already exists'
-full_main=$((DEVICE_BYTES / 65536 * 65536))
-full_tail=$((DEVICE_BYTES - full_main))
-prefix_main=$((PREFIX_SIZE_BYTES / 65536 * 65536))
-prefix_tail=$((PREFIX_SIZE_BYTES - prefix_main))
-printf 'schema\t2\ndevice\t%s\ndevice_bytes\t%s\nprefix_size_bytes\t%s\nread_floor_bytes\t%s\nfull_main_bytes\t%s\nfull_tail_bytes\t%s\nprefix_main_bytes\t%s\nprefix_tail_bytes\t%s\nskip_random\t%s\nsettle_seconds\t%s\n' \
-    "$DEVICE" "$DEVICE_BYTES" "$PREFIX_SIZE_BYTES" "$READ_FLOOR_BYTES" "$full_main" "$full_tail" "$prefix_main" "$prefix_tail" "$SKIP_RANDOM" "$PREPARE_SETTLE_SECONDS" > "$RESULT_DIR/plan.tsv"
+seq_main=$((PREPARE_END_BYTES / 65536 * 65536))
+seq_tail=$((PREPARE_END_BYTES - seq_main))
+printf 'schema\t3\ndevice\t%s\ndevice_bytes\t%s\nprepare_end_bytes\t%s\ncache_guard_bytes\t%s\nqlc_candidate_end_bytes\t%s\nsequential_main_bytes\t%s\nsequential_tail_bytes\t%s\nskip_random\t%s\nsettle_seconds\t%s\n' \
+    "$DEVICE" "$DEVICE_BYTES" "$PREPARE_END_BYTES" "$CACHE_GUARD_BYTES" "$((PREPARE_END_BYTES-CACHE_GUARD_BYTES))" "$seq_main" "$seq_tail" "$SKIP_RANDOM" "$PREPARE_SETTLE_SECONDS" > "$RESULT_DIR/plan.tsv"
+printf 'read_offset_bytes\t%s\nread_size_bytes\t%s\n' "$read_start" "$read_length" >> "$RESULT_DIR/plan.tsv"
 printf 'epoch_ms\tevent\tdetail\n' > "$RESULT_DIR/events.tsv"
 record() { printf '%s000\t%s\t%s\n' "$(date -u +%s)" "$1" "${2:-}" >> "$RESULT_DIR/events.tsv"; }
 stages=()
@@ -87,14 +89,12 @@ EOF
     stages+=("$name")
     budgets+=("$length")
 }
-job full_sequential_main 0 "$full_main" 64k
-job full_sequential_tail "$full_main" "$full_tail" 4k
-job prefix_sequential_main 0 "$prefix_main" 64k
-job prefix_sequential_tail "$prefix_main" "$prefix_tail" 4k
+job partial_sequential_main 0 "$seq_main" 64k
+job partial_sequential_tail "$seq_main" "$seq_tail" 4k
 FIO_BIN=${FIO_BIN:-fio}
 printf '#!/usr/bin/env bash\nset -euo pipefail\n' > "$RESULT_DIR/commands.sh"
 if [[ $SKIP_RANDOM == 0 ]]; then
-    for upstream in rnd.job rnd2.job rnd3.job rnd64.job; do
+    for upstream in rnd.job rnd2.job rnd3.job; do
         cp -- "$UPSTREAM_DIR/$upstream" "$RESULT_DIR/$upstream"
         printf '%q %q --filename=%q --output-format=json --output=%q\n' "$FIO_BIN" "$RESULT_DIR/$upstream" "$DEVICE" "$RESULT_DIR/$upstream.json" >> "$RESULT_DIR/commands.sh"
     done
@@ -102,7 +102,7 @@ fi
 for stage in "${stages[@]}"; do
     printf '%q %q --filename=%q --output-format=json --output=%q\n' "$FIO_BIN" "$RESULT_DIR/$stage.fio" "$DEVICE" "$RESULT_DIR/$stage.fio.json" >> "$RESULT_DIR/commands.sh"
 done
-record generated 'full logical cover followed by low-address prefix cover'
+record generated 'original random conditioning, then one partial sequential pass; no full cover or prefix rewrite'
 if [[ $DRY_RUN == 1 ]]; then
     printf '1\n' > "$RESULT_DIR/DRY_RUN"
     record dry_run 'No fio or sleep; no QLC proof'
@@ -150,19 +150,20 @@ run_job() {
     record job_end "$name; completed_bytes=$expected"
 }
 if [[ $SKIP_RANDOM == 0 ]]; then
-    for upstream in rnd.job rnd2.job rnd3.job rnd64.job; do run_job "$RESULT_DIR/$upstream" -1; done
+    for upstream in rnd.job rnd2.job rnd3.job; do run_job "$RESULT_DIR/$upstream" -1; done
 else record random_skipped 'Operator declares prior random conditioning already complete'; fi
 for index in "${!stages[@]}"; do
     run_job "$RESULT_DIR/${stages[$index]}.fio" "${budgets[$index]}"
 done
 record settle_wait "$PREPARE_SETTLE_SECONDS seconds; time alone does not prove compaction completion"
 sleep "$PREPARE_SETTLE_SECONDS"
-"$PYTHON_BIN" - "$RESULT_DIR/completed.json" "$DEVICE" "$DEVICE_BYTES" "$PREFIX_SIZE_BYTES" "$READ_FLOOR_BYTES" <<'PY'
+"$PYTHON_BIN" - "$RESULT_DIR/completed.json" "$DEVICE" "$DEVICE_BYTES" "$PREPARE_END_BYTES" "$CACHE_GUARD_BYTES" <<'PY'
 from __future__ import print_function
 import json, sys
-json.dump({'schema': 2, 'writes_completed': True, 'qlc_verified': False,
+json.dump({'schema': 3, 'writes_completed': True, 'qlc_verified': False,
            'device': sys.argv[2], 'device_bytes': int(sys.argv[3]),
-           'prefix_size_bytes': int(sys.argv[4]), 'read_floor_bytes': int(sys.argv[5]),
+           'prepare_end_bytes': int(sys.argv[4]), 'cache_guard_bytes': int(sys.argv[5]),
+           'qlc_candidate_end_bytes': int(sys.argv[4])-int(sys.argv[5]),
            'next_step': 'Host verify_qlc_range.py scans the complete selected read range'},
           open(sys.argv[1], 'w'), indent=2)
 PY
